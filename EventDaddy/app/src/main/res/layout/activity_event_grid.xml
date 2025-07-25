@@ -22,6 +22,15 @@
             android:layout_gravity="center_horizontal"
             android:paddingBottom="16dp" />
 
+        <EditText
+            android:id="@+id/filterInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Search by event name or date (YYYY-MM-DD)"
+            android:padding="12dp"
+            android:background="@android:drawable/edit_text"
+            android:layout_margin="16dp"/>
+
         <!-- TableLayout -->
         <TableLayout
             android:id="@+id/eventTable"

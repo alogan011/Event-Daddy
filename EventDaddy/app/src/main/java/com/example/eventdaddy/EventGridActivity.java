@@ -3,7 +3,6 @@ package com.example.eventdaddy;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.database.Cursor;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.EditText;
@@ -15,11 +14,14 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
+import java.util.List;
+
 public class EventGridActivity extends AppCompatActivity {
 
-    private int userId; // Logged-in user's ID
-    private DatabaseHelper dbHelper;
-    private TableLayout eventTable;
+    private int userId;                        // Currently logged-in user's ID
+    private DatabaseHelper dbHelper;          // DB helper instance
+    private EditText filterInput;             // Search/filter text field
+    private TableLayout eventTable;           // Layout to display event rows
     private Button addEventButton, logoutButton;
 
     @Override
@@ -27,52 +29,61 @@ public class EventGridActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_event_grid);
 
-        // Retrieve userId from intent
+        // Retrieve userId from previous screen (MainActivity)
         userId = getIntent().getIntExtra("userId", -1);
+        dbHelper = new DatabaseHelper(this);  // Initialize DB helper
 
-        // Initialize database helper
-        dbHelper = new DatabaseHelper(this);
-
-        // Find views
+        // Link layout views
         initializeViews();
 
-        // Load existing events for this user
+        // Setup filtering
+        filterInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filterAndDisplayEvents(s.toString().trim());
+            }
+            @Override
+            public void afterTextChanged(android.text.Editable s) {}
+        });
+
+        // Load current user’s events
         loadUserEvents();
 
-        // Set up add event button click behavior
+        // Set up button click actions
         setupAddButtonListener();
-
-        // Set up logout functionality
         setupLogoutButton();
     }
 
-    // Finds and assigns UI elements to variables
+    // Connect layout views to variables
     private void initializeViews() {
         eventTable = findViewById(R.id.eventTable);
         addEventButton = findViewById(R.id.addEventButton);
         logoutButton = findViewById(R.id.logoutButton);
+        filterInput = findViewById(R.id.filterInput);
     }
 
-    // Loads event data from the database and adds rows to the UI
+    // Load all events for this user and display in table
     private void loadUserEvents() {
         loadEventsFromDatabase(eventTable);
     }
 
-    // Handles logic when user clicks Add Event button
+    // Set up add event button
     private void setupAddButtonListener() {
         addEventButton.setOnClickListener(v -> openAddEventDialog(eventTable));
     }
 
-    // Logs user out by clearing shared preferences and returning to login screen
+    // Clears login session and returns to login screen
     private void setupLogoutButton() {
         logoutButton.setOnClickListener(v -> {
             SharedPreferences prefs = getSharedPreferences("EventDaddyPrefs", MODE_PRIVATE);
             SharedPreferences.Editor editor = prefs.edit();
-            editor.putBoolean("isLoggedIn", false); // Mark user as logged out
-            editor.remove("userId"); // Remove user-specific data
+            editor.putBoolean("isLoggedIn", false);
+            editor.remove("userId");
             editor.apply();
 
-            // Return to login screen
+            // Redirect to login
             Intent intent = new Intent(EventGridActivity.this, MainActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(intent);
@@ -80,45 +91,43 @@ public class EventGridActivity extends AppCompatActivity {
         });
     }
 
-    // Retrieves events from the DB and adds each as a new row in the table layout
+    // Fetch events from DB, sort them, and display
     private void loadEventsFromDatabase(TableLayout tableLayout) {
-        tableLayout.removeAllViews(); // Clear table to avoid duplication
+        tableLayout.removeAllViews(); // Clear any old rows
 
-        Cursor cursor = dbHelper.getUserEvents(userId); // Get events for the user
+        List<Event> eventList = dbHelper.getUserEventsList(userId);
 
-        if (cursor.moveToFirst()) {
-            do {
-                String eventName = cursor.getString(cursor.getColumnIndex("event_name"));
-                String eventDate = cursor.getString(cursor.getColumnIndex("event_date"));
-                int eventId = cursor.getInt(cursor.getColumnIndex("event_id"));
+        // Sort events by date + time ascending
+        eventList.sort((e1, e2) -> {
+            String dateTime1 = e1.getDate() + " " + e1.getTime();
+            String dateTime2 = e2.getDate() + " " + e2.getTime();
+            return dateTime1.compareTo(dateTime2);
+        });
 
-                // Add a row to display this event
-                addEventRow(tableLayout, eventName, eventDate, eventId);
-            } while (cursor.moveToNext());
+        for (Event event : eventList) {
+            addEventRow(tableLayout, event.getName(), event.getDate(), event.getId());
         }
-
-        cursor.close(); // Always close the cursor
     }
 
-    // Displays a popup dialog to allow user to input a new event
-    // Refactored to break up dialog creation and logic for clarity
+    // Displays a dialog box to enter event name and date
     private void openAddEventDialog(TableLayout tableLayout) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Add New Event");
 
-        LinearLayout dialogLayout = buildDialogLayout();
+        LinearLayout dialogLayout = buildDialogLayout();  // Create layout
         EditText eventNameInput = (EditText) dialogLayout.getChildAt(0);
         EditText eventDateInput = (EditText) dialogLayout.getChildAt(1);
 
         builder.setView(dialogLayout);
 
+        // Handle Add button
         builder.setPositiveButton("Add", (dialog, which) -> {
             String eventName = eventNameInput.getText().toString().trim();
             String eventDate = eventDateInput.getText().toString().trim();
 
             if (!eventName.isEmpty() && !eventDate.isEmpty()) {
                 if (dbHelper.addEvent(eventName, eventDate, "10:00 AM", userId)) {
-                    loadEventsFromDatabase(tableLayout); // Reload the table
+                    loadEventsFromDatabase(tableLayout);  // Refresh
                 }
             }
         });
@@ -127,7 +136,7 @@ public class EventGridActivity extends AppCompatActivity {
         builder.show();
     }
 
-    // Builds and returns the layout for the Add Event dialog
+    // Creates vertical layout for the Add Event dialog
     private LinearLayout buildDialogLayout() {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -144,47 +153,60 @@ public class EventGridActivity extends AppCompatActivity {
         return layout;
     }
 
-
-
-    // Adds a single event row with name, date, and delete button
+    // Adds a single row to the event table
     private void addEventRow(TableLayout tableLayout, String eventNameText, String eventDateText, int eventId) {
         TableRow newRow = new TableRow(this);
 
-        // Event Name Column
+        // Event name column
         TextView eventName = new TextView(this);
         eventName.setText(eventNameText);
         eventName.setPadding(16, 16, 16, 16);
         eventName.setMaxLines(2);
         eventName.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        eventName.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1)); // 1/3 width
+        eventName.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1));
 
-        // Event Date Column
+        // Event date column
         TextView eventDate = new TextView(this);
         eventDate.setText(eventDateText);
         eventDate.setPadding(16, 16, 16, 16);
         eventDate.setMaxLines(1);
         eventDate.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        eventDate.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1)); // 1/3 width
+        eventDate.setLayoutParams(new TableRow.LayoutParams(0, TableRow.LayoutParams.WRAP_CONTENT, 1));
 
-        // Delete Button Column
+        // Delete button
         Button deleteButton = new Button(this);
         deleteButton.setText("DELETE");
-        deleteButton.setTextColor(ContextCompat.getColor(this, android.R.color.white));//White text
-        deleteButton.setBackgroundTintList(ContextCompat.getColorStateList(this, R.color.custom_red));//Red background
+        deleteButton.setTextColor(ContextCompat.getColor(this, android.R.color.white));
+        deleteButton.setBackgroundTintList(ContextCompat.getColorStateList(this, R.color.custom_red));
         deleteButton.setLayoutParams(new TableRow.LayoutParams(TableRow.LayoutParams.WRAP_CONTENT, TableRow.LayoutParams.WRAP_CONTENT));
         deleteButton.setOnClickListener(v -> {
-            // Remove from DB and UI
             if (dbHelper.deleteEvent(eventId)) {
-                tableLayout.removeView(newRow);
+                tableLayout.removeView(newRow);  // Remove row from UI
             }
         });
 
-        // Add all views to the row
+        // Add columns to row
         newRow.addView(eventName);
         newRow.addView(eventDate);
         newRow.addView(deleteButton);
 
-        // Add row to the table
+        // Add row to table layout
         tableLayout.addView(newRow);
+    }
+
+    // Filters events based on user input in search field
+    private void filterAndDisplayEvents(String query) {
+        eventTable.removeAllViews();  // Clear table
+
+        List<Event> eventList = dbHelper.getUserEventsList(userId);
+
+        for (Event event : eventList) {
+            String name = event.getName().toLowerCase();
+            String date = event.getDate().toLowerCase();
+
+            if (name.contains(query.toLowerCase()) || date.contains(query.toLowerCase())) {
+                addEventRow(eventTable, event.getName(), event.getDate(), event.getId());
+            }
+        }
     }
 }
